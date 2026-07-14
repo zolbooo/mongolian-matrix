@@ -672,7 +672,6 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
 
     @objc func debugSnapshot() -> NSString {
         ensureSimulation()
-        rebuildInstanceVertices()
         let vertices = instanceVertices
         var lines: [String] = []
         lines.append("core bytes=\(vertices.count * MemoryLayout<CellVertex>.stride) vertexCount=\(vertices.count)")
@@ -753,7 +752,7 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
             advanceCursors()
             ageExistingCells(fadeBrightnessSeed: randomUnit())
         }
-        rebuildVisibleCells()
+        rebuildVisibleCellsAndInstances()
     }
 
     private func stepSimulation() {
@@ -780,7 +779,7 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         if fadeState != 1 {
             advanceCursors()
         }
-        rebuildVisibleCells()
+        rebuildVisibleCellsAndInstances()
 
         rotationDegrees = 0
     }
@@ -883,31 +882,51 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         }
     }
 
-    private func rebuildVisibleCells() {
+    private func rebuildVisibleCellsAndInstances() {
+        let previousActiveCellCount = activeCellCount
         activeCellCount = 0
-        for index in cells.indices {
-            guard cells[index].phase >= 1, cells[index].phase <= 4 else {
-                cells[index].color = SIMD4<Float>(0, 0, 0, 1)
-                continue
-            }
+        instanceVertices.removeAll(keepingCapacity: true)
+        instanceVertices.reserveCapacity(previousActiveCellCount)
+        for row in 0..<rows {
+            for column in 0..<columns {
+                let index = row * columns + column
+                guard cells[index].phase >= 1, cells[index].phase <= 4 else {
+                    cells[index].color = SIMD4<Float>(0, 0, 0, 1)
+                    continue
+                }
 
-            let t = Float(cells[index].phaseTicks) / Float(phaseDuration(cells[index].phase))
-            let color: MatrixColor
-            switch cells[index].phase {
-            case 1:
-                color = colors[2]
-            case 2:
-                color = colors[1].blend(t, with: colors[2])
-            case 3:
-                color = colors[1]
-            case 4:
-                color = colors[0].blend(t, with: colors[1])
-            default:
-                color = MatrixColor(r: 0, g: 0, b: 0)
+                let t = Float(cells[index].phaseTicks) / Float(phaseDuration(cells[index].phase))
+                let color: MatrixColor
+                switch cells[index].phase {
+                case 1:
+                    color = colors[2]
+                case 2:
+                    color = colors[1].blend(t, with: colors[2])
+                case 3:
+                    color = colors[1]
+                case 4:
+                    color = colors[0].blend(t, with: colors[1])
+                default:
+                    color = MatrixColor(r: 0, g: 0, b: 0)
+                }
+                let alpha = cells[index].phase == 1 ? t : 1
+                cells[index].color = SIMD4<Float>(color.r * cells[index].brightness, color.g * cells[index].brightness, color.b * cells[index].brightness, alpha)
+
+                let glyph = Int(cells[index].glyph)
+                let vertexColor = byteColor(cells[index].color)
+                instanceVertices.append(CellVertex(
+                    x: UInt16(clamping: column),
+                    y: UInt16(clamping: row),
+                    z: depthFor(cells[index]),
+                    texX: UInt8((glyph >> 4) & 15),
+                    texY: UInt8(glyph & 15),
+                    r: vertexColor.0,
+                    g: vertexColor.1,
+                    b: vertexColor.2,
+                    a: vertexColor.3
+                ))
+                activeCellCount += 1
             }
-            let alpha = cells[index].phase == 1 ? t : 1
-            cells[index].color = SIMD4<Float>(color.r * cells[index].brightness, color.g * cells[index].brightness, color.b * cells[index].brightness, alpha)
-            activeCellCount += 1
         }
     }
 
@@ -929,7 +948,6 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
               let drawable = currentDrawable,
               let commandBuffer = commandQueue.makeCommandBuffer() else { return }
 
-        rebuildInstanceVertices()
         let vertexBytes = instanceVertices.count * MemoryLayout<CellVertex>.stride
         frameSemaphore.wait()
         commandBuffer.addCompletedHandler { [frameSemaphore] _ in
@@ -977,31 +995,6 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         instanceBufferCapacity = capacity
         frameIndex = 0
         return true
-    }
-
-    private func rebuildInstanceVertices() {
-        instanceVertices.removeAll(keepingCapacity: true)
-        instanceVertices.reserveCapacity(activeCellCount)
-        for row in 0..<rows {
-            for column in 0..<columns {
-                let cell = cells[row * columns + column]
-                guard cell.phase != 0 else { continue }
-                let glyph = Int(cell.glyph)
-                let z = depthFor(cell)
-                let color = byteColor(cell.color)
-                instanceVertices.append(CellVertex(
-                    x: UInt16(clamping: column),
-                    y: UInt16(clamping: row),
-                    z: z,
-                    texX: UInt8((glyph >> 4) & 15),
-                    texY: UInt8(glyph & 15),
-                    r: color.0,
-                    g: color.1,
-                    b: color.2,
-                    a: color.3
-                ))
-            }
-        }
     }
 
     private func depthFor(_ cell: Cell) -> UInt16 {
