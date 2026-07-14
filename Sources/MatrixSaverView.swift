@@ -380,6 +380,7 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
 
     private var cells: [Cell] = []
     private var cursors: [Cursor] = []
+    private var instanceVertices: [CellVertex] = []
     private var instanceBuffers: [MTLBuffer] = []
     private var instanceBufferCapacity = 0
     private var frameIndex = 0
@@ -680,7 +681,8 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
 
     @objc func debugSnapshot() -> NSString {
         ensureSimulation()
-        let vertices = makeVertices()
+        rebuildInstanceVertices()
+        let vertices = instanceVertices
         var lines: [String] = []
         lines.append("core bytes=\(vertices.count * MemoryLayout<CellVertex>.stride) vertexCount=\(vertices.count)")
         lines.append(String(format: "dims width=%0.6f height=%0.6f rows=%d cols=%d cursorGroups=%d active=%d tick=%d fadeState=%d rotate=%0.6f fadeDistance=%0.6f cellSize=%d drawBytes=%d",
@@ -936,8 +938,8 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
               let drawable = currentDrawable,
               let commandBuffer = commandQueue.makeCommandBuffer() else { return }
 
-        let vertices = makeVertices()
-        let vertexBytes = vertices.count * MemoryLayout<CellVertex>.stride
+        rebuildInstanceVertices()
+        let vertexBytes = instanceVertices.count * MemoryLayout<CellVertex>.stride
         frameSemaphore.wait()
         commandBuffer.addCompletedHandler { [frameSemaphore] _ in
             frameSemaphore.signal()
@@ -952,7 +954,7 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         let vertexBuffer = instanceBuffers[frameIndex]
         frameIndex = (frameIndex + 1) % instanceBuffers.count
         if vertexBytes > 0 {
-            vertices.withUnsafeBytes { bytes in
+            instanceVertices.withUnsafeBytes { bytes in
                 guard let source = bytes.baseAddress else { return }
                 memcpy(vertexBuffer.contents(), source, vertexBytes)
             }
@@ -968,7 +970,7 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
         encoder.setVertexBuffer(vertexOffsetsBuffer, offset: 0, index: 2)
-        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: vertices.count)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: instanceVertices.count)
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
@@ -987,9 +989,9 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         return true
     }
 
-    private func makeVertices() -> [CellVertex] {
-        var vertices: [CellVertex] = []
-        vertices.reserveCapacity(activeCellCount)
+    private func rebuildInstanceVertices() {
+        instanceVertices.removeAll(keepingCapacity: true)
+        instanceVertices.reserveCapacity(activeCellCount)
         for row in 0..<rows {
             for column in 0..<columns {
                 let cell = cells[row * columns + column]
@@ -997,7 +999,7 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
                 let glyph = Int(cell.glyph)
                 let z = depthFor(cell)
                 let color = byteColor(cell.color)
-                vertices.append(CellVertex(
+                instanceVertices.append(CellVertex(
                     x: UInt16(clamping: column),
                     y: UInt16(clamping: row),
                     z: z,
@@ -1010,7 +1012,6 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
                 ))
             }
         }
-        return vertices
     }
 
     private func depthFor(_ cell: Cell) -> UInt16 {
