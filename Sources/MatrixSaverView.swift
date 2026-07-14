@@ -376,9 +376,13 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
     private let glyphTexture: MTLTexture
     private let glyphSampler: MTLSamplerState
     private let vertexOffsetsBuffer: MTLBuffer
+    private let frameSemaphore = DispatchSemaphore(value: 3)
 
     private var cells: [Cell] = []
     private var cursors: [Cursor] = []
+    private var instanceBuffers: [MTLBuffer] = []
+    private var instanceBufferCapacity = 0
+    private var frameIndex = 0
     private var columns = 0
     private var rows = 0
     private var logicalWidth: Float = 1
@@ -930,13 +934,30 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
     private func render() {
         guard let descriptor = currentRenderPassDescriptor,
               let drawable = currentDrawable,
-              let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+              let commandBuffer = commandQueue.makeCommandBuffer() else { return }
 
         let vertices = makeVertices()
+        let vertexBytes = vertices.count * MemoryLayout<CellVertex>.stride
+        frameSemaphore.wait()
+        commandBuffer.addCompletedHandler { [frameSemaphore] _ in
+            frameSemaphore.signal()
+        }
+
+        guard ensureInstanceBufferCapacity(vertexBytes),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+            commandBuffer.commit()
+            return
+        }
+
+        let vertexBuffer = instanceBuffers[frameIndex]
+        frameIndex = (frameIndex + 1) % instanceBuffers.count
+        if vertexBytes > 0 {
+            vertices.withUnsafeBytes { bytes in
+                guard let source = bytes.baseAddress else { return }
+                memcpy(vertexBuffer.contents(), source, vertexBytes)
+            }
+        }
         var uniforms = makeUniforms()
-        let vertexBuffer = device!.makeBuffer(bytes: vertices, length: max(1, MemoryLayout<CellVertex>.stride * vertices.count), options: .storageModeManaged)
-        let uniformBuffer = device!.makeBuffer(bytes: &uniforms, length: MemoryLayout<Uniforms>.stride, options: .storageModeManaged)
 
         encoder.setCullMode(.none)
         encoder.setViewport(MTLViewport(originX: 0, originY: 0, width: pixelWidth, height: pixelHeight, znear: 0, zfar: 1))
@@ -945,12 +966,25 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         encoder.setFragmentTexture(glyphTexture, index: 0)
         encoder.setFragmentSamplerState(glyphSampler, index: 0)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.setVertexBuffer(uniformBuffer, offset: 0, index: 1)
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
         encoder.setVertexBuffer(vertexOffsetsBuffer, offset: 0, index: 2)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: vertices.count)
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    private func ensureInstanceBufferCapacity(_ requiredBytes: Int) -> Bool {
+        guard requiredBytes > instanceBufferCapacity || instanceBuffers.isEmpty else { return true }
+        let capacity = max(4096, max(requiredBytes, instanceBufferCapacity * 2))
+        let buffers = (0..<3).compactMap { _ in
+            device?.makeBuffer(length: capacity, options: .storageModeShared)
+        }
+        guard buffers.count == 3 else { return false }
+        instanceBuffers = buffers
+        instanceBufferCapacity = capacity
+        frameIndex = 0
+        return true
     }
 
     private func makeVertices() -> [CellVertex] {
