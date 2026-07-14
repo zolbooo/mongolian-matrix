@@ -19,7 +19,7 @@ $(BUNDLE): $(MACOS)/$(EXECUTABLE) $(BUILD_DIR)/resources-copied $(CONTENTS)/Info
 
 $(MACOS)/$(EXECUTABLE): $(SWIFT_SOURCES)
 	@mkdir -p $(MACOS) $(MODULE_CACHE)
-	swiftc -emit-library -parse-as-library -module-name Matrix \
+	swiftc -O -emit-library -parse-as-library -module-name Matrix \
 		-target arm64-apple-macos12.0 \
 		-module-cache-path $(MODULE_CACHE) \
 		-framework Cocoa -framework ScreenSaver -framework Metal -framework MetalKit -framework QuartzCore \
