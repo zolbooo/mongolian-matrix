@@ -9,13 +9,16 @@ MACOS := $(CONTENTS)/MacOS
 RESOURCES := $(CONTENTS)/Resources
 EXECUTABLE := Matrix
 SWIFT_SOURCES := $(wildcard Sources/*.swift)
+METAL_SOURCES := $(wildcard Shaders/*.metal)
+METAL_AIR := $(BUILD_DIR)/MatrixShaders.air
+METALLIB := $(RESOURCES)/MatrixShaders.metallib
 
 .PHONY: all clean install probes
 
 all: $(BUNDLE)
 probes: $(BUILD_DIR)/probe_swift $(BUILD_DIR)/probe_original
 
-$(BUNDLE): $(MACOS)/$(EXECUTABLE) $(BUILD_DIR)/resources-copied $(CONTENTS)/Info.plist
+$(BUNDLE): $(MACOS)/$(EXECUTABLE) $(BUILD_DIR)/resources-copied $(METALLIB) $(CONTENTS)/Info.plist
 
 $(MACOS)/$(EXECUTABLE): $(SWIFT_SOURCES)
 	@mkdir -p $(MACOS) $(MODULE_CACHE)
@@ -30,6 +33,14 @@ $(BUILD_DIR)/resources-copied: $(shell find Resources -type f)
 	@mkdir -p $(RESOURCES)
 	cp -R Resources/. $(RESOURCES)/
 	@touch $@
+
+$(METAL_AIR): $(METAL_SOURCES)
+	@mkdir -p $(BUILD_DIR)
+	xcrun --toolchain Metal -sdk macosx metal -c $< -o $@
+
+$(METALLIB): $(METAL_AIR)
+	@mkdir -p $(RESOURCES)
+	xcrun --toolchain Metal -sdk macosx metallib $< -o $@
 
 $(CONTENTS)/Info.plist: Info.plist
 	@mkdir -p $(CONTENTS)
