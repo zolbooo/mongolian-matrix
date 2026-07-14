@@ -460,7 +460,6 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         samplerDescriptor.mipFilter = .linear
         samplerDescriptor.sAddressMode = .clampToEdge
         samplerDescriptor.tAddressMode = .clampToEdge
-        samplerDescriptor.maxAnisotropy = 16
         glyphSampler = device.makeSamplerState(descriptor: samplerDescriptor)!
 
         var offsets = [
