@@ -372,7 +372,6 @@ private final class MatrixConfigurationController: NSObject {
 private final class MatrixMetalView: MTKView, MTKViewDelegate {
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
-    private let depthState: MTLDepthStencilState
     private let glyphTexture: MTLTexture
     private let glyphSampler: MTLSamplerState
     private let vertexOffsetsBuffer: MTLBuffer
@@ -445,13 +444,7 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         descriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
         descriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
         descriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-        descriptor.depthAttachmentPixelFormat = .depth32Float
         pipelineState = try! device.makeRenderPipelineState(descriptor: descriptor)
-
-        let depthDescriptor = MTLDepthStencilDescriptor()
-        depthDescriptor.depthCompareFunction = .lessEqual
-        depthDescriptor.isDepthWriteEnabled = true
-        depthState = device.makeDepthStencilState(descriptor: depthDescriptor)!
 
         let textureURL = Bundle(for: Matrix.self).url(forResource: "clean32", withExtension: "png")!
         glyphTexture = try! MTKTextureLoader(device: device).newTexture(URL: textureURL, options: [
@@ -480,9 +473,7 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
 
         super.init(frame: frameRect, device: device)
         colorPixelFormat = .bgra8Unorm
-        depthStencilPixelFormat = .depth32Float
         clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-        clearDepth = 1
         isPaused = true
         enableSetNeedsDisplay = true
         delegate = self
@@ -964,7 +955,6 @@ private final class MatrixMetalView: MTKView, MTKViewDelegate {
         encoder.setCullMode(.none)
         encoder.setViewport(MTLViewport(originX: 0, originY: 0, width: pixelWidth, height: pixelHeight, znear: 0, zfar: 1))
         encoder.setRenderPipelineState(pipelineState)
-        encoder.setDepthStencilState(depthState)
         encoder.setFragmentTexture(glyphTexture, index: 0)
         encoder.setFragmentSamplerState(glyphSampler, index: 0)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
